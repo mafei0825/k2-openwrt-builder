@@ -21,9 +21,12 @@ jobs:
       - name: 下载 OpenWrt SDK
         run: |
           wget https://downloads.openwrt.org/releases/23.05.5/targets/ramips/mt7620/openwrt-sdk-23.05.5-ramips-mt7620_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar -xf openwrt-sdk-*.tar.xz
-          mv openwrt-sdk-* sdk
-          echo "✅ SDK 下载完成"
+          tar -xf openwrt-sdk-23.05.5-ramips-mt7620_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          
+          # 查找解压出的目录名（可能是 openwrt-sdk-23.05.5-ramips-mt7620_gcc-12.3.0_musl.Linux-x86_64）
+          SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -1)
+          mv $SDK_DIR sdk
+          echo "✅ SDK 下载完成，目录：sdk"
 
       - name: 配置 SDK 环境
         run: |
