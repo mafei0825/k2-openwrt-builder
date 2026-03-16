@@ -29,15 +29,8 @@ jobs:
       - name: 配置 SDK 环境
         run: |
           cd sdk
-          # 复制你的 .config 文件
           cp ${{ github.workspace }}/config-repo/config-files/.config .config
           echo "✅ 已加载你的 .config 配置文件"
-          
-          # 如需第三方源，可取消注释下行
-          # echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
-          # echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
-          
-          # 更新 feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -51,6 +44,7 @@ jobs:
           echo "=== 搜索 luci-i18n-base-zh-cn ==="
           ./scripts/feeds list | grep luci-i18n-base-zh-cn || echo "❌ 未找到 luci-i18n-base-zh-cn"
 
+      # ========== 编译所有包（保持原样）==========
       - name: 编译 LuCI 核心组件
         run: |
           cd sdk
@@ -173,20 +167,120 @@ jobs:
           done
           set -e
 
-      - name: 收集编译好的 IPK 文件
+      # ========== 收集并重命名 IPK 文件，生成安装脚本 ==========
+      - name: 收集 IPK 文件并生成安装脚本
         run: |
           mkdir -p ipk-output
+          
+          # 复制所有 IPK 文件到输出目录
           find sdk/bin/packages -name "*.ipk" -exec cp {} ipk-output/ \;
           cd ipk-output
+          
+          # 创建分类目录
           mkdir -p luci wireguard zerotier tools libs
+          
+          # 移动文件到对应目录
           mv *luci*.ipk luci/ 2>/dev/null || true
           mv *wireguard*.ipk wireguard/ 2>/dev/null || true
           mv *zerotier*.ipk zerotier/ 2>/dev/null || true
           mv *htop* *nano* *iperf* *tcpdump* *curl* *wget* *tar* *unzip* tools/ 2>/dev/null || true
           mv *lib*.ipk libs/ 2>/dev/null || true
-          echo "✅ 共找到 $(find . -name "*.ipk" | wc -l) 个 IPK 文件"
+          
+          # 生成离线安装脚本
+          cat > install.sh << 'EOF'
+#!/bin/sh
+# K2 OpenWrt 全功能包离线安装脚本
+# 按依赖顺序自动安装所有包
 
-      - name: 上传 IPK 包
+# 设置颜色输出
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo "========================================"
+echo "K2 OpenWrt 全功能包离线安装"
+echo "========================================"
+
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# 检查 opkg
+if ! command -v opkg >/dev/null 2>&1; then
+    echo "${RED}❌ 错误：opkg 命令不存在！${NC}"
+    exit 1
+fi
+
+# 创建日志文件
+LOG_FILE="/tmp/ipk_install_$(date +%Y%m%d_%H%M%S).log"
+echo "安装日志：$LOG_FILE"
+
+# 安装函数
+install_dir() {
+    local dir=$1
+    local name=$2
+    
+    if [ ! -d "$dir" ]; then
+        echo "${YELLOW}⚠️ 跳过 $name（目录不存在）${NC}"
+        return
+    fi
+    
+    cd "$dir"
+    local count=$(ls *.ipk 2>/dev/null | wc -l)
+    if [ "$count" -eq 0 ]; then
+        echo "${YELLOW}⚠️ $name 目录中没有 IPK 文件${NC}"
+        cd ..
+        return
+    fi
+    
+    echo "${GREEN}▶ 安装 $name...${NC}"
+    for pkg in *.ipk; do
+        echo "  正在安装: $pkg"
+        opkg install "$pkg" >> "$LOG_FILE" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "  ${GREEN}✅ $pkg 安装成功${NC}"
+        else
+            echo "  ${RED}❌ $pkg 安装失败${NC}"
+        fi
+    done
+    cd ..
+}
+
+# 按依赖顺序安装
+echo "${GREEN}开始按依赖顺序安装...${NC}"
+
+install_dir "libs" "基础库"
+install_dir "tools" "核心服务 (uhttpd等)"
+install_dir "luci" "LuCI 基础组件"
+install_dir "wireguard" "WireGuard"
+install_dir "zerotier" "ZeroTier"
+install_dir "tools" "实用工具"
+
+# 检查 LuCI 服务
+echo "${GREEN}▶ 检查服务状态...${NC}"
+if [ -f /etc/init.d/uhttpd ]; then
+    /etc/init.d/uhttpd enable
+    /etc/init.d/uhttpd start
+    echo "${GREEN}✅ uhttpd 服务已启动${NC}"
+fi
+
+if [ -f /etc/init.d/zerotier ]; then
+    /etc/init.d/zerotier enable
+    echo "${GREEN}✅ ZeroTier 已启用${NC}"
+fi
+
+echo "========================================"
+echo "${GREEN}✅ 安装完成！${NC}"
+echo "📝 安装日志：$LOG_FILE"
+echo "🌐 Web 管理地址：http://192.168.1.1"
+echo "========================================"
+EOF
+
+          chmod +x install.sh
+          echo "✅ 已生成离线安装脚本 install.sh"
+
+      - name: 上传 IPK 包和安装脚本
         uses: actions/upload-artifact@v4
         with:
           name: k2-full-ipk-packages
