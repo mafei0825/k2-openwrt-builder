@@ -1,0 +1,151 @@
+name: K2 v22.4 OpenWrt 23.05.5 16M-base + 推送源码包
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison g++ gawk \
+          gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+          python3-setuptools rsync swig unzip zlib1g-dev file wget
+
+      - name: 检出代码（仅用于占位）
+        uses: actions/checkout@v4
+
+      # ========== 清理旧的 openwrt 目录 ==========
+      - name: 清理旧的 openwrt 目录
+        run: rm -rf openwrt
+
+      - name: 下载 OpenWrt 23.05.5 源码
+        run: |
+          git clone --depth 1 -b openwrt-23.05 https://github.com/openwrt/openwrt.git openwrt
+          cd openwrt
+          git fetch --tags
+          git checkout v23.05.5
+          echo "✅ OpenWrt 23.05.5 源码下载完成"
+
+      # ========== 1. 16M闪存适配：修改 DTS ==========
+      - name: 🔧 修改 DTS (8MB -> 16MB)
+        run: |
+          cd openwrt
+          FILE="target/linux/ramips/dts/mt7620a_phicomm_k2-v22.4.dts"
+          if [ -f "$FILE" ]; then
+            echo "修改前 DTS 分区大小："
+            grep "reg = <0x50000" "$FILE" || echo "未找到"
+            sed -i 's/reg = <0x50000 0x7b0000>/reg = <0x50000 0x1fb0000>/' "$FILE"
+            echo "修改后 DTS 分区大小："
+            grep "reg = <0x50000" "$FILE"
+            echo "✅ DTS 修改完成"
+          else
+            echo "❌ DTS 文件不存在！退出。"
+            exit 1
+          fi
+
+      # ========== 2. 16M闪存适配：修改 Makefile ==========
+      - name: 🔧 修改 Makefile (IMAGE_SIZE 8MB -> 16MB)
+        run: |
+          cd openwrt
+          MK_FILE="target/linux/ramips/image/mt7620.mk"
+          if [ -f "$MK_FILE" ]; then
+            echo "修改前 IMAGE_SIZE："
+            grep -A5 "phicomm_k2-v22.4" "$MK_FILE" | grep "IMAGE_SIZE" || echo "未找到"
+            sed -i '/phicomm_k2-v22.4/,/endef/ s/IMAGE_SIZE := .*/IMAGE_SIZE := 16064k/' "$MK_FILE"
+            echo "修改后 IMAGE_SIZE："
+            grep -A5 "phicomm_k2-v22.4" "$MK_FILE" | grep "IMAGE_SIZE"
+            echo "✅ Makefile 修改完成"
+          else
+            echo "❌ Makefile 不存在！退出。"
+            exit 1
+          fi
+
+      # ========== 3. 创建基础 .config ==========
+      - name: 📝 创建 .config
+        run: |
+          cd openwrt
+          echo "CONFIG_TARGET_ramips=y" > .config
+          echo "CONFIG_TARGET_ramips_mt7620=y" >> .config
+          echo "CONFIG_TARGET_ramips_mt7620_DEVICE_phicomm_k2-v22.4=y" >> .config
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=16" >> .config
+          make defconfig
+          echo "✅ .config 生成完成"
+          grep "phicomm_k2-v22.4" .config || true
+
+      # ========== 4. 打包修改后的源码目录（用于推送）==========
+      - name: 📦 打包修改后的源码目录
+        run: |
+          tar -czf openwrt-k2-source.tar.gz -C ${{ github.workspace }} openwrt
+          echo "✅ 源码目录打包完成：openwrt-k2-source.tar.gz"
+
+      # ========== 5. 推送源码包到目标仓库 ==========
+      - name: ⚙️ 配置 Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 📤 推送源码包到目标仓库
+        env:
+          # 注意：此处使用 TARGET_REPO_TOKEN，需要在当前仓库的 Secrets 中配置一个具有目标仓库写入权限的 Personal Access Token
+          TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        run: |
+          # 清理旧的 target-repo 目录
+          rm -rf target-repo
+          # 克隆目标仓库（使用 token 认证）
+          git clone https://oauth2:${TARGET_REPO_TOKEN}@github.com/mafei0825/k2-openwrt-builder.git target-repo
+          cd target-repo
+          # 创建或清空 source-package 目录
+          mkdir -p source-package
+          rm -rf source-package/*
+          # 复制源码包和 .config 文件
+          cp ${{ github.workspace }}/openwrt-k2-source.tar.gz source-package/
+          cp ${{ github.workspace }}/openwrt/.config source-package/
+          # 添加更改
+          git add source-package/
+          # 提交（若无变化则跳过）
+          git diff --quiet && git diff --staged --quiet || git commit -m "更新 K2 OpenWrt 源码包 (包含 DTS/Makefile/.config) - $(date +'%Y-%m-%d %H:%M:%S')"
+          # 推送到 main 分支
+          git push origin main
+
+      # ========== 6. 编译固件 ==========
+      - name: 🔄 更新 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 📥 下载源代码包
+        run: |
+          cd openwrt
+          make download -j8
+
+      - name: ⚙️ 编译固件
+        run: |
+          cd openwrt
+          echo "开始编译时间: $(date)"
+          make -j$(nproc) V=s
+          echo "编译完成时间: $(date)"
+
+      # ========== 7. 整理固件文件 ==========
+      - name: 📦 整理固件
+        run: |
+          cd openwrt
+          mkdir -p firmware
+          find bin/targets/ -name "*.bin" -exec cp {} firmware/ \;
+          cd firmware
+          md5sum *.bin > md5sums.txt
+          echo "固件列表："
+          ls -la
+
+      # ========== 8. 上传固件 ==========
+      - name: ⬆️ 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: K2-v22.4-16M-23.05.5-基础系统
+          path: openwrt/firmware/
+          retention-days: 30
