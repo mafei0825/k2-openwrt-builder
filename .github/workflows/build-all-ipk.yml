@@ -1,4 +1,4 @@
-name: 编译 K2 全功能 IPK 包集合
+name: 编译 K2 全功能 IPK 包集合（含 auc + attendedsysupgrade）
 
 on:
   workflow_dispatch:
@@ -101,6 +101,24 @@ jobs:
           make package/luci-i18n-zerotier-zh-cn/compile V=s || echo "⚠️ luci-i18n-zerotier-zh-cn 编译失败，继续"
           set -e
 
+      # ===== 新增：auc 和 attendedsysupgrade =====
+      - name: 编译 auc 和 attendedsysupgrade
+        run: |
+          cd sdk
+          set +e
+          echo "编译 auc 和 attendedsysupgrade..."
+          
+          # auc - 自动固件更新检查工具
+          make package/auc/compile V=s || echo "⚠️ auc 编译失败，继续"
+          
+          # attendedsysupgrade - 自动升级 Web 界面
+          make package/luci-app-attendedsysupgrade/compile V=s || echo "⚠️ luci-app-attendedsysupgrade 编译失败，继续"
+          
+          # 中文语言包（如果存在）
+          make package/luci-i18n-attendedsysupgrade-zh-cn/compile V=s || echo "⚠️ 中文包编译失败，继续"
+          
+          set -e
+
       - name: 编译 Web 服务器
         run: |
           cd sdk
@@ -177,7 +195,7 @@ jobs:
           cd ipk-output
           
           # 创建分类目录
-          mkdir -p luci wireguard zerotier tools libs
+          mkdir -p luci wireguard zerotier tools libs attended
           
           # 移动文件到对应目录
           mv *luci*.ipk luci/ 2>/dev/null || true
@@ -185,10 +203,11 @@ jobs:
           mv *zerotier*.ipk zerotier/ 2>/dev/null || true
           mv *htop* *nano* *iperf* *tcpdump* *curl* *wget* *tar* *unzip* tools/ 2>/dev/null || true
           mv *lib*.ipk libs/ 2>/dev/null || true
+          mv *auc*.ipk *attended*.ipk attended/ 2>/dev/null || true
           
-          # ===== 使用逐行 echo 创建安装脚本，避免 YAML 语法错误 =====
+          # ===== 使用逐行 echo 创建安装脚本 =====
           echo "#!/bin/sh" > install.sh
-          echo "# K2 OpenWrt 全功能包离线安装脚本" >> install.sh
+          echo "# K2 OpenWrt 全功能包离线安装脚本（含 auc + attendedsysupgrade）" >> install.sh
           echo "" >> install.sh
           echo "# 设置颜色输出" >> install.sh
           echo "RED='\033[0;31m'" >> install.sh
@@ -197,7 +216,7 @@ jobs:
           echo "NC='\033[0m' # No Color" >> install.sh
           echo "" >> install.sh
           echo "echo \"========================================\"" >> install.sh
-          echo "echo \"K2 OpenWrt 全功能包离线安装\"" >> install.sh
+          echo "echo \"K2 OpenWrt 全功能包离线安装（含自动升级）\"" >> install.sh
           echo "echo \"========================================\"" >> install.sh
           echo "" >> install.sh
           echo "# 获取脚本所在目录" >> install.sh
@@ -253,6 +272,7 @@ jobs:
           echo "install_dir \"luci\" \"LuCI 基础组件\"" >> install.sh
           echo "install_dir \"wireguard\" \"WireGuard\"" >> install.sh
           echo "install_dir \"zerotier\" \"ZeroTier\"" >> install.sh
+          echo "install_dir \"attended\" \"自动升级 (auc + attendedsysupgrade)\"" >> install.sh
           echo "install_dir \"tools\" \"实用工具\"" >> install.sh
           echo "" >> install.sh
           echo "# 检查 LuCI 服务" >> install.sh
@@ -268,18 +288,24 @@ jobs:
           echo "    echo \"\${GREEN}✅ ZeroTier 已启用\${NC}\"" >> install.sh
           echo "fi" >> install.sh
           echo "" >> install.sh
+          echo "# 提示 attendedsysupgrade 配置" >> install.sh
+          echo "if [ -f /usr/lib/lua/luci/controller/attendedsysupgrade.lua ]; then" >> install.sh
+          echo "    echo \"\${GREEN}✅ attendedsysupgrade 已安装，可在 LuCI 的「系统」菜单中找到\${NC}\"" >> install.sh
+          echo "fi" >> install.sh
+          echo "" >> install.sh
           echo "echo \"========================================\"" >> install.sh
           echo "echo \"\${GREEN}✅ 安装完成！\${NC}\"" >> install.sh
           echo "echo \"📝 安装日志：\$LOG_FILE\"" >> install.sh
           echo "echo \"🌐 Web 管理地址：http://192.168.1.1\"" >> install.sh
+          echo "echo \"🔄 自动升级：在「系统」→「Attended Sysupgrade」中配置\"" >> install.sh
           echo "echo \"========================================\"" >> install.sh
           
           chmod +x install.sh
-          echo "✅ 已生成离线安装脚本 install.sh"
+          echo "✅ 已生成离线安装脚本 install.sh（含 auc 和 attendedsysupgrade）"
 
       - name: 上传 IPK 包和安装脚本
         uses: actions/upload-artifact@v4
         with:
-          name: k2-full-ipk-packages
+          name: k2-full-ipk-packages-with-attendedsysupgrade
           path: ipk-output/
           retention-days: 30
