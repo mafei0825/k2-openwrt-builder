@@ -1,12 +1,12 @@
-name: 编译 K2 专用 IPK 包
+name: 编译 K2 全功能 IPK 包集合
 
 on:
   workflow_dispatch:
     inputs:
-      packages:
-        description: '要编译的包名（空格分隔）'
-        required: true
-        default: 'luci-app-wireguard wireguard-tools zerotier luci-app-zerotier'
+      custom_packages:
+        description: '额外要编译的包名（可选，空格分隔）'
+        required: false
+        default: ''
 
 jobs:
   build-ipk:
@@ -15,13 +15,11 @@ jobs:
       - name: 检出配置文件仓库
         uses: actions/checkout@v4
         with:
-          # 直接检出 k2-openwrt-builder 仓库
           repository: 'mafei0825/k2-openwrt-builder'
           path: 'config-repo'
 
       - name: 下载 OpenWrt SDK
         run: |
-          # 下载对应 K2 架构 (mipsel_24kc) 的 SDK
           wget https://downloads.openwrt.org/releases/23.05.5/targets/ramips/mt7620/openwrt-sdk-23.05.5-ramips-mt7620_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xf openwrt-sdk-*.tar.xz
           mv openwrt-sdk-* sdk
@@ -31,12 +29,12 @@ jobs:
         run: |
           cd sdk
           
-          # 复制你的 .config 文件（包含所有16M闪存适配）
+          # 复制你的 .config 文件
           cp ${{ github.workspace }}/config-repo/config-files/.config .config
           
           echo "✅ 已加载你的 .config 配置文件"
           
-          # 如果需要编译第三方插件，可以添加 feeds 源
+          # 添加第三方软件源（kenzo 源包含很多常用插件）
           echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
           echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
           
@@ -44,28 +42,121 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-      - name: 编译指定的 IPK 包
+      - name: 编译核心功能包
         run: |
           cd sdk
           
-          # 将输入的包名按空格分割，逐个编译
-          for pkg in ${{ github.event.inputs.packages }}; do
-            echo "========================================="
-            echo "正在编译: $pkg"
-            echo "========================================="
-            make package/$pkg/compile V=s || echo "⚠️ 包 $pkg 编译失败，继续下一个"
-          done
+          # ===== LuCI 核心组件 =====
+          echo "编译 LuCI 核心组件..."
+          make package/luci/compile V=s
+          make package/luci-base/compile V=s
+          make package/luci-mod-admin-full/compile V=s
+          make package/luci-theme-bootstrap/compile V=s
+          
+          # ===== LuCI 应用模块 =====
+          echo "编译 LuCI 应用模块..."
+          make package/luci-app-firewall/compile V=s
+          make package/luci-app-opkg/compile V=s
+          make package/luci-proto-ipv6/compile V=s
+          make package/luci-proto-ppp/compile V=s
+          make package/luci-mod-status/compile V=s
+          make package/luci-mod-system/compile V=s
+          make package/luci-mod-network/compile V=s
+          
+          # ===== 中文语言包 =====
+          echo "编译中文语言包..."
+          make package/luci-i18n-base-zh-cn/compile V=s
+          make package/luci-i18n-firewall-zh-cn/compile V=s
+          make package/luci-i18n-opkg-zh-cn/compile V=s
+          
+          # ===== WireGuard =====
+          echo "编译 WireGuard..."
+          make package/kmod-wireguard/compile V=s
+          make package/wireguard-tools/compile V=s
+          make package/luci-app-wireguard/compile V=s
+          make package/luci-i18n-wireguard-zh-cn/compile V=s
+          
+          # ===== ZeroTier =====
+          echo "编译 ZeroTier..."
+          make package/zerotier/compile V=s
+          make package/luci-app-zerotier/compile V=s
+          make package/luci-i18n-zerotier-zh-cn/compile V=s
+          
+          # ===== Web 服务器 =====
+          echo "编译 Web 服务器..."
+          make package/uhttpd/compile V=s
+          make package/uhttpd-mod-ubus/compile V=s
+          
+          # ===== 基础服务工具 =====
+          echo "编译基础服务工具..."
+          make package/rpcd/compile V=s
+          make package/rpcd-mod-file/compile V=s
+          make package/rpcd-mod-luci/compile V=s
+          make package/rpcd-mod-ucode/compile V=s
+          make package/rpcd-mod-iwinfo/compile V=s
+          make package/cgi-io/compile V=s
+          
+          # ===== 依赖库 =====
+          echo "编译依赖库..."
+          make package/liblucihttp0/compile V=s
+          make package/liblucihttp-ucode/compile V=s
+          make package/ucode-mod-math/compile V=s
+          make package/ucode-mod-html/compile V=s
+          make package/ucode-mod-fs/compile V=s
+          make package/ucode-mod-nl80211/compile V=s
+          make package/ucode-mod-rtnl/compile V=s
+          make package/ucode-mod-ubus/compile V=s
+          make package/ucode-mod-uci/compile V=s
+          make package/ucode-mod-uloop/compile V=s
+          
+          # ===== 实用工具 =====
+          echo "编译实用工具..."
+          make package/htop/compile V=s
+          make package/nano/compile V=s
+          make package/iperf3/compile V=s
+          make package/tcpdump/compile V=s
+          make package/curl/compile V=s
+          make package/wget/compile V=s
+          make package/tar/compile V=s
+          make package/unzip/compile V=s
+          
+          # ===== 额外自定义包（可选）=====
+          if [ -n "${{ github.event.inputs.custom_packages }}" ]; then
+            echo "编译额外自定义包..."
+            for pkg in ${{ github.event.inputs.custom_packages }}; do
+              echo "正在编译: $pkg"
+              make package/$pkg/compile V=s || echo "⚠️ 包 $pkg 编译失败，继续下一个"
+            done
+          fi
           
       - name: 收集编译好的 IPK 文件
         run: |
           mkdir -p ipk-output
           # 查找所有编译出的 .ipk 文件
           find sdk/bin/packages -name "*.ipk" -exec cp {} ipk-output/ \;
-          echo "✅ 共找到 $(ls ipk-output/*.ipk 2>/dev/null | wc -l) 个 IPK 文件"
+          
+          # 按类别整理文件
+          cd ipk-output
+          mkdir -p luci wireguard zerotier tools libs
+          
+          # 简单分类（可以根据需要调整）
+          mv *luci*.ipk luci/ 2>/dev/null || true
+          mv *wireguard*.ipk wireguard/ 2>/dev/null || true
+          mv *zerotier*.ipk zerotier/ 2>/dev/null || true
+          mv *htop* *nano* *iperf* *tcpdump* *curl* *wget* *tar* *unzip* tools/ 2>/dev/null || true
+          mv *lib*.ipk libs/ 2>/dev/null || true
+          
+          echo "✅ 共找到 $(find . -name "*.ipk" | wc -l) 个 IPK 文件"
+          echo "分类统计："
+          echo "  LuCI: $(ls luci/*.ipk 2>/dev/null | wc -l) 个"
+          echo "  WireGuard: $(ls wireguard/*.ipk 2>/dev/null | wc -l) 个"
+          echo "  ZeroTier: $(ls zerotier/*.ipk 2>/dev/null | wc -l) 个"
+          echo "  工具: $(ls tools/*.ipk 2>/dev/null | wc -l) 个"
+          echo "  库: $(ls libs/*.ipk 2>/dev/null | wc -l) 个"
           
       - name: 上传 IPK 包
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-ipk-packages
+          name: k2-full-ipk-packages
           path: ipk-output/
           retention-days: 30
