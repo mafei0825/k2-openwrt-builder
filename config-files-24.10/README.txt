@@ -1,9 +1,9 @@
 ================================================
-K2 OpenWrt 24.10.4 配置文件说明（含 LuCI、中文、WireGuard、ZeroTier）
+K2 OpenWrt 24.10.4 配置文件说明（全功能版 + Attended Sysupgrade）
 ================================================
 
 文件列表：
-- .config                            # 编译配置文件（包含所有功能）
+- .config                            # 编译配置文件
 - mt7620a_phicomm_k2-v22.4.dts        # K2 v22.4 DTS文件（已修改为16M闪存）
 - mt7620.mk                           # Makefile（IMAGE_SIZE已修改为16064k）
 
@@ -15,6 +15,7 @@ K2 OpenWrt 24.10.4 配置文件说明（含 LuCI、中文、WireGuard、ZeroTier
    - 简体中文语言包
    - WireGuard（内核模块 + LuCI 界面）
    - ZeroTier（客户端 + LuCI 界面）
+   - auc + Attended Sysupgrade（自动升级）
    - uhttpd Web 服务器
 
 使用方法：
